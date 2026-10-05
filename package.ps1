@@ -1,6 +1,9 @@
-param([switch]$IncludeTomTomKey)
+param([switch]$IncludeTomTomKey, [string]$ReleaseTag)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+if ($ReleaseTag -and $ReleaseTag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+    throw 'ReleaseTag must be a version such as v0.2.0'
+}
 
 & (Join-Path $PSScriptRoot 'build.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
@@ -15,13 +18,13 @@ if (-not (Test-Path -LiteralPath $controller -PathType Leaf)) {
     throw 'NVDA controller DLL is missing from dist\Streetwalk'
 }
 
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$destination = Join-Path $PSScriptRoot "dist\Streetwalk-portable-$stamp"
+$suffix = if ($ReleaseTag) { $ReleaseTag } else { Get-Date -Format 'yyyyMMdd-HHmmss' }
+$destination = Join-Path $PSScriptRoot "dist\Streetwalk-portable-$suffix"
 if (Test-Path -LiteralPath $destination) { throw "Package already exists: $destination" }
 New-Item -ItemType Directory -Path $destination | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $destination 'data') | Out-Null
 
-foreach ($file in @('README.md', 'SERVICES.md', 'EV-AUDIO-MODEL.md', 'LICENSE', 'THIRD_PARTY.md', 'Cargo.toml', 'Cargo.lock', 'build.ps1', 'package.ps1', '.gitignore')) {
+foreach ($file in @('README.md', 'USERGUIDE.md', 'SERVICES.md', 'EV-AUDIO-MODEL.md', 'LICENSE', 'THIRD_PARTY.md', 'Cargo.toml', 'Cargo.lock', 'build.ps1', 'package.ps1', '.gitignore')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $destination
 }
 foreach ($folder in @('src', 'assets', 'tests')) {

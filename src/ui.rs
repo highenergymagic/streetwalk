@@ -1296,8 +1296,8 @@ impl App {
             .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
         let markdown = documentation_dir
             .as_ref()
-            .and_then(|dir| std::fs::read_to_string(dir.join("README.md")).ok())
-            .unwrap_or_else(|| include_str!("../README.md").to_owned());
+            .and_then(|dir| std::fs::read_to_string(dir.join("USERGUIDE.md")).ok())
+            .unwrap_or_else(|| include_str!("../USERGUIDE.md").to_owned());
         let base = documentation_dir
             .and_then(|dir| reqwest::Url::from_directory_path(dir).ok())
             .map(|url| url.to_string().replace('&', "&amp;"))
@@ -1308,11 +1308,11 @@ impl App {
             pulldown_cmark::Parser::new_ext(&markdown, pulldown_cmark::Options::all()),
         );
         let page = format!("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><base href=\"{base}\"><title>Streetwalk guide</title><style>body{{font:1.1rem/1.5 system-ui,sans-serif;max-width:75ch;margin:2rem auto;padding:0 1rem}}table{{border-collapse:collapse}}td,th{{border:1px solid;padding:.4rem}}code{{font-size:.95em}}</style><main>{body}</main></html>");
-        let path = data::directory().join("README.html");
+        let path = data::directory().join("USERGUIDE.html");
         let result =
             std::fs::create_dir_all(data::directory()).and_then(|_| std::fs::write(&path, page));
         if let Err(e) = result {
-            self.announce(&format!("Could not open README: {e}"));
+            self.announce(&format!("Could not open the user guide: {e}"));
             return;
         }
         unsafe {
@@ -1326,7 +1326,7 @@ impl App {
                 SW_SHOWNORMAL,
             );
             if outcome as isize <= 32 {
-                self.announce("Could not open the README in your default browser.");
+                self.announce("Could not open the user guide in your default browser.");
             }
         }
     }
@@ -3917,7 +3917,7 @@ pub fn run() {
         } else {
             "Map coverage is loading for your saved position.".into()
         };
-        app.announce(&format!("Streetwalk. {}. {}. Explore with the top-row actions, or press Escape for virtual walking. F1 opens the README in your browser. {}",app.area.name,app.speech.status,location));
+        app.announce(&format!("Streetwalk. {}. {}. Explore with the top-row actions, or press Escape for virtual walking. F1 opens the user guide in your browser. {}",app.area.name,app.speech.status,location));
         let preference = data::read::<Preferences>("preferences.json").ok();
         let use_pc_location = if let Some(preference) = preference {
             preference.start_at_pc_location

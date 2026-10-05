@@ -1,0 +1,96 @@
+name: Portable Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust stable
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+      - name: Check release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Tag $env:GITHUB_REF_NAME does not match Cargo.toml version $version" }
+      - name: Fetch official NVDA controller client
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'nvda-controller.zip'
+          Invoke-WebRequest 'https://download.nvaccess.org/releases/2026.2/nvda_2026.2_controllerClient.zip' -OutFile $archive
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
+          $expected = '510736F021AEFA33378076FA342A4524B586BC1C6B096DB9479AF42B28AAC649'
+          if ($actual -ne $expected) { throw "NVDA controller checksum mismatch: $actual" }
+          Expand-Archive -LiteralPath $archive -DestinationPath 'dist/nvda-controller'
+      - name: Check Clippy
+        shell: pwsh
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Build and package
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            .\package.ps1 -ReleaseTag $env:GITHUB_REF_NAME
+          } else {
+            .\package.ps1
+          }
+      - name: Verify public package
+        shell: pwsh
+        run: |
+          $zip = @(Get-ChildItem 'dist/Streetwalk-portable-*.zip')
+          if ($zip.Count -ne 1) { throw 'Expected exactly one portable ZIP' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip[0].FullName)
+          try {
+            $names = @($archive.Entries | ForEach-Object { $_.FullName -replace '\\', '/' })
+            if (-not @($names | Where-Object { $_ -match '(^|/)streetwalk\.exe$' }).Count) { throw 'Executable missing from ZIP' }
+            if (-not @($names | Where-Object { $_ -match '(^|/)USERGUIDE\.md$' }).Count) { throw 'User guide missing from ZIP' }
+            if (-not @($names | Where-Object { $_ -match '(^|/)nvdaControllerClient\.dll$' }).Count) { throw 'NVDA controller missing from ZIP' }
+            if (@($names | Where-Object { $_ -match '(^|/)(google_key|tomtom_key)\.txt$' }).Count) { throw 'API key file found in ZIP' }
+          } finally {
+            $archive.Dispose()
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streetwalk-portable
+          path: dist/Streetwalk-portable-*.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: streetwalk-portable
+          path: release
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $zip = @(Get-ChildItem 'release/Streetwalk-portable-*.zip')
+          if ($zip.Count -ne 1) { throw 'Expected exactly one portable ZIP' }
+          gh release view $env:GITHUB_REF_NAME *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:GITHUB_REF_NAME $zip[0].FullName --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME $zip[0].FullName --title "Streetwalk $env:GITHUB_REF_NAME" --generate-notes --verify-tag
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish GitHub Release' }

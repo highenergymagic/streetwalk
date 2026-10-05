@@ -26,6 +26,7 @@ try {
     Write-Warning 'Streetwalk is running. Close it before replacing streetwalk.exe; this build was saved as streetwalk-updated.exe.'
 }
 Copy-Item -LiteralPath 'README.md' -Destination $destination
+Copy-Item -LiteralPath 'USERGUIDE.md' -Destination $destination
 Copy-Item -LiteralPath 'SERVICES.md' -Destination $destination
 Copy-Item -LiteralPath 'EV-AUDIO-MODEL.md' -Destination $destination
 Copy-Item -LiteralPath 'LICENSE' -Destination $destination
@@ -55,6 +56,6 @@ if (Test-Path "$controller\x64\nvdaControllerClient.dll") {
     Copy-Item -LiteralPath "$controller\license.txt" -Destination "$destination\NVDA-controller-license.txt"
     Copy-Item -LiteralPath "$controller\readme.md" -Destination "$destination\NVDA-controller-readme.md"
 } else {
-    Write-Warning 'Place the official x64 nvdaControllerClient.dll beside streetwalk.exe for speech. See README.'
+    Write-Warning 'Place the official x64 nvdaControllerClient.dll beside streetwalk.exe for speech. See USERGUIDE.md.'
 }
 Write-Host "Ready: $executable"

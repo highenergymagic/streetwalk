@@ -1,6 +1,6 @@
 # Streetwalk services, privacy and build details
 
-This file describes the current network calls and local files. The [main guide](README.md) covers operation.
+This file describes the current network calls and local files. The [user guide](USERGUIDE.md) covers operation; the [developer README](README.md) covers the code and releases.
 
 ## Map and route providers
 
@@ -56,7 +56,7 @@ Windows, Rust and a matching native linker are required. The script uses `tools/
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-`build.ps1` checks formatting, runs the unit tests, builds the release executable and assembles `dist/Streetwalk`. With the required NVDA controller DLL available, `package.ps1` creates a timestamped portable folder and ZIP under `dist`; a TomTom key is only required with `-IncludeTomTomKey`. The portable package includes source, lockfile, notices and an empty data folder. Locally downloaded research PDFs and the original Freesound preview stay in `research/leaf2017/sources` and are excluded from the portable package.
+`build.ps1` checks formatting, runs the unit tests, builds the release executable and assembles `dist/Streetwalk`. With the official NVDA controller archive extracted under `dist/nvda-controller`, `package.ps1` creates a timestamped portable folder and ZIP under `dist`; a TomTom key is only required with `-IncludeTomTomKey`. The portable package includes source, lockfile, the user guide, notices and an empty data folder. GitHub Actions builds a key-free portable artifact on main, pull requests and manual runs, and publishes it on a matching version tag. Locally downloaded research PDFs and the original Freesound preview stay in `research/leaf2017/sources` and are excluded from the portable package.
 
 For explicit network smoke tests, use `cargo test live_search_download_and_cache -- --ignored --nocapture`. They contact public services and write under `target/live-smoke`. With NVDA running, `cargo test --test nvda -- --ignored --nocapture` checks the controller DLL connection without speaking. Offline unit tests cover map parsing, navigation, speech, audio and route behavior; they do not verify perceived realism or every keyboard-focus path in a live Windows session.
 
