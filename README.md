@@ -83,7 +83,7 @@ Clock directions are relative to virtual heading: 12 ahead, 3 right, 6 behind an
 
 ## Files, services and limitations
 
-The portable folder includes the executable, NVDA controller DLL, the LEAF cabin texture and its notice, documentation, source, build scripts, and an empty `data` folder. It also includes the configured TomTom key. Remove that key before sharing the folder if you do not want others to use its quota. Your Google key is not packaged automatically.
+The portable folder includes the executable, NVDA controller DLL, the LEAF cabin texture and its notice, documentation, source, build scripts, and an empty `data` folder. API keys are excluded by default. To include the configured TomTom key intentionally, run `./package.ps1 -IncludeTomTomKey`; anyone receiving that package can use the key's quota. Your Google key is never packaged automatically.
 
 Streetwalk's original code is [MIT licensed](LICENSE). Bundled sounds, HRTF measurements, the LEAF texture and the optional NVDA DLL keep their [separate terms and notices](THIRD_PARTY.md). Read [services, privacy and build details](SERVICES.md) for providers, environment variables, cache behavior and build commands. Read the [EV audio model](EV-AUDIO-MODEL.md) and [LEAF research notes](research/leaf2017/README.md) for audio provenance.
 

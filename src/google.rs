@@ -45,11 +45,12 @@ fn response_json(
 ) -> Result<Value, String> {
     let response = request
         .send()
-        .map_err(|e| format!("Google {action} failed: {e}"))?;
+        .map_err(|e| format!("Google {action} failed: {}", e.without_url()))?;
     let status = response.status();
-    let value: Value = response
-        .json()
-        .map_err(|e| format!("Google {action} returned invalid JSON: {e}"))?;
+    let body = crate::data::limited_body(response, 16 * 1024 * 1024)
+        .map_err(|e| format!("Google {action} failed: {e}"))?;
+    let value: Value = serde_json::from_slice(&body)
+        .map_err(|_| format!("Google {action} returned invalid JSON"))?;
     if !status.is_success() {
         let detail = value["error"]["message"]
             .as_str()
@@ -308,26 +309,27 @@ impl Network {
             }
         }
         let key = key()?;
-        if query
-            .trim()
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_digit())
-        {
-            let value = response_json(
+        if crate::data::house_number_prefix(query).is_some() {
+            let geocoded = response_json(
                 self.client
                     .get("https://maps.googleapis.com/maps/api/geocode/json")
                     .query(&[("address", query), ("key", &key)]),
                 "address search",
-            )?;
-            check_geocode(&value)?;
-            let results = value["results"]
-                .as_array()
-                .ok_or("Invalid Google address response")?;
-            return Ok(results.iter().take(20).filter_map(|v| Some(SearchResult {
-                name: v["formatted_address"].as_str()?.to_owned(),
-                point: point(&json!({"latitude":v["geometry"]["location"]["lat"],"longitude":v["geometry"]["location"]["lng"]}))?,
-            })).collect());
+            );
+            if let Ok(value) = geocoded.and_then(|value| {
+                check_geocode(&value)?;
+                Ok(value)
+            }) {
+                if let Some(results) = value["results"].as_array() {
+                    let results: Vec<_> = results.iter().take(20).filter_map(|v| Some(SearchResult {
+                        name: v["formatted_address"].as_str()?.to_owned(),
+                        point: point(&json!({"latitude":v["geometry"]["location"]["lat"],"longitude":v["geometry"]["location"]["lng"]}))?,
+                    })).collect();
+                    if !results.is_empty() {
+                        return Ok(results);
+                    }
+                }
+            }
         }
         let explicit_location = query.to_ascii_lowercase().contains(" in ");
         let radii: &[f64] = if origin.is_some() && !explicit_location {
@@ -427,7 +429,11 @@ impl Network {
             }
         }
         places.sort_by(|a, b| p.distance(a.point).total_cmp(&p.distance(b.point)));
-        let street = self.google_reverse(p)?.street;
+        // Places remain useful when Geocoding is unavailable or out of quota.
+        let street = self
+            .google_reverse(p)
+            .map(|address| address.street)
+            .unwrap_or_default();
         Ok(Area {
             name: result.name,
             version: 10,
@@ -438,6 +444,7 @@ impl Network {
             signalized_crossings: vec![],
             road_events: vec![],
             google_street: street,
+            context_nodes: Default::default(),
         })
     }
 
@@ -480,6 +487,15 @@ impl Network {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_errors_do_not_expose_query_keys() {
+        let request = reqwest::blocking::Client::new()
+            .get("https://maps.googleapis.com/maps/api/geocode/json?key=CANARY_SECRET")
+            .header("X-Invalid", "\n");
+        let error = response_json(request, "test").unwrap_err();
+        assert!(!error.contains("CANARY_SECRET"));
+    }
 
     #[test]
     fn text_search_uses_virtual_position_and_expanding_radius() {

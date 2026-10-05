@@ -5,6 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    io::Read,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -107,6 +108,34 @@ pub fn directory() -> PathBuf {
                 .join("data")
         })
 }
+pub(crate) fn limited_body(
+    response: reqwest::blocking::Response,
+    limit: u64,
+) -> Result<Vec<u8>, String> {
+    limited_read(response, limit)
+}
+fn limited_read(reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
+    let mut body = Vec::new();
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut body)
+        .map_err(|e| format!("Could not read service response: {e}"))?;
+    if body.len() as u64 > limit {
+        return Err(format!("Service response exceeds {limit} bytes"));
+    }
+    Ok(body)
+}
+fn limited_text(response: reqwest::blocking::Response, limit: u64) -> Result<String, String> {
+    String::from_utf8(limited_body(response, limit)?)
+        .map_err(|_| "Service response is not UTF-8".into())
+}
+fn limited_json<T: serde::de::DeserializeOwned>(
+    response: reqwest::blocking::Response,
+    limit: u64,
+) -> Result<T, String> {
+    serde_json::from_slice(&limited_body(response, limit)?)
+        .map_err(|_| "Service response is not valid JSON".into())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,15 +151,48 @@ mod tests {
         ));
     }
     #[test]
-    fn clipped_map_description_does_not_end_mid_word() {
+    fn mapped_description_preserves_all_available_text() {
         let original = "The images were created from original photographs taken by the artist with some from archival collections. The intent was to create a collection of images that appeared timeless. The 74 glass panels are facted to from a sweeping curved glass wall that d";
-        assert_eq!(complete_source_description(original), "The images were created from original photographs taken by the artist with some from archival collections. The intent was to create a collection of images that appeared timeless. The source description ends here.");
+        assert_eq!(complete_source_description(original), original);
         let mut place = Area::demo().places[0].clone();
         place.name = "Return".into();
         place.description = original.into();
         let (spoken, source) = Network::new().unwrap().place_context(&place).unwrap();
         assert!(spoken.ends_with("make the work a tribute to the city."));
         assert!(source.starts_with("https://artbeat.seattle.gov/"));
+    }
+    #[test]
+    fn search_cache_is_local_to_the_origin() {
+        let seattle = Point {
+            lat: 47.60,
+            lon: -122.33,
+        };
+        let portland = Point {
+            lat: 45.52,
+            lon: -122.68,
+        };
+        assert_ne!(
+            search_cache_key("Coffee", Some(seattle)),
+            search_cache_key("coffee", Some(portland))
+        );
+        assert_eq!(
+            search_cache_key(" Coffee ", Some(seattle)),
+            search_cache_key("coffee", Some(seattle))
+        );
+    }
+    #[test]
+    fn digit_prefixed_place_names_are_not_addresses() {
+        assert_eq!(house_number_prefix("123 Main Street"), Some("123"));
+        assert_eq!(house_number_prefix("7-Eleven"), None);
+        assert_eq!(house_number_prefix("5th Avenue"), None);
+    }
+    #[test]
+    fn service_body_limit_rejects_oversized_responses() {
+        assert_eq!(
+            limited_read(std::io::Cursor::new(b"1234"), 4).unwrap(),
+            b"1234"
+        );
+        assert!(limited_read(std::io::Cursor::new(b"12345"), 4).is_err());
     }
     #[test]
     fn traffic_flow_parses_speed_and_checks_direction() {
@@ -509,15 +571,15 @@ impl Network {
             .join(",");
         let endpoint = std::env::var("STREETWALK_ELEVATION_URL")
             .unwrap_or_else(|_| "https://api.open-meteo.com/v1/elevation".into());
-        let value: serde_json::Value = self
+        let response = self
             .client
             .get(endpoint)
             .query(&[("latitude", latitudes), ("longitude", longitudes)])
             .timeout(Duration::from_secs(15))
             .send()
             .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json())
             .map_err(|e| format!("Elevation unavailable: {e}"))?;
+        let value: serde_json::Value = limited_json(response, 1024 * 1024)?;
         let heights = value["elevation"]
             .as_array()
             .ok_or("Elevation response has no heights")?;
@@ -574,8 +636,7 @@ impl Network {
                 response.status().as_u16()
             ));
         }
-        let value: serde_json::Value = response
-            .json()
+        let value: serde_json::Value = limited_json(response, 4 * 1024 * 1024)
             .map_err(|_| "TomTom incidents response was not valid JSON".to_owned())?;
         TrafficIncident::parse_many(&value)
     }
@@ -604,8 +665,7 @@ impl Network {
                 response.status().as_u16()
             ));
         }
-        let value: serde_json::Value = response
-            .json()
+        let value: serde_json::Value = limited_json(response, 1024 * 1024)
             .map_err(|_| "TomTom traffic response was not valid JSON".to_owned())?;
         TrafficFlow::parse(&value)
     }
@@ -613,7 +673,7 @@ impl Network {
         self.throttle();
         let endpoint = std::env::var("STREETWALK_WEATHER_URL")
             .unwrap_or_else(|_| "https://api.open-meteo.com/v1/forecast".into());
-        let value: serde_json::Value = self
+        let response = self
             .client
             .get(endpoint)
             .query(&[
@@ -628,8 +688,8 @@ impl Network {
             .timeout(Duration::from_secs(12))
             .send()
             .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json())
             .map_err(|e| format!("Weather unavailable: {e}"))?;
+        let value: serde_json::Value = limited_json(response, 1024 * 1024)?;
         let current = &value["current"];
         let weather = Weather {
             temperature_c: current["temperature_2m"]
@@ -659,7 +719,7 @@ impl Network {
             .trim_end_matches('/')
             .strip_suffix("/api")
             .unwrap_or(search.trim_end_matches('/'));
-        let response: serde_json::Value = self
+        let response = self
             .client
             .get(format!("{base}/reverse"))
             .query(&[
@@ -671,8 +731,8 @@ impl Network {
             .timeout(Duration::from_secs(15))
             .send()
             .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json())
             .map_err(|e| format!("Address lookup unavailable: {e}"))?;
+        let response: serde_json::Value = limited_json(response, 2 * 1024 * 1024)?;
         let features = response["features"]
             .as_array()
             .ok_or("Invalid address lookup response")?;
@@ -754,26 +814,28 @@ impl Network {
             }
         }
         let mut cache: std::collections::BTreeMap<String, Vec<SearchResult>> =
-            read("searches_v2.json").unwrap_or_default();
-        let key = query.trim().to_lowercase();
-        let requested_number = query
-            .split_whitespace()
-            .next()
-            .filter(|first| first.chars().next().is_some_and(|c| c.is_ascii_digit()));
+            read("searches_v3.json").unwrap_or_default();
+        let key = search_cache_key(query, origin);
+        let requested_number = house_number_prefix(query);
         if let Some(results) = cache.get(&key) {
             return Ok(results.clone());
         }
         self.throttle();
         let endpoint = std::env::var("STREETWALK_PHOTON_URL")
             .unwrap_or_else(|_| "https://photon.komoot.io/api/".into());
-        let v: serde_json::Value = self
+        let mut parameters = vec![("q", query.to_owned()), ("limit", "50".into())];
+        if let Some(point) = origin.filter(|p| p.valid()) {
+            parameters.push(("lat", point.lat.to_string()));
+            parameters.push(("lon", point.lon.to_string()));
+        }
+        let response = self
             .client
             .get(endpoint)
-            .query(&[("q", query), ("limit", "50")])
+            .query(&parameters)
             .send()
             .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json())
             .map_err(|e| format!("Place search failed: {e}"))?;
+        let v: serde_json::Value = limited_json(response, 4 * 1024 * 1024)?;
         let features = v["features"].as_array().ok_or("Invalid search response")?;
         let results: Vec<_> = features
             .iter()
@@ -809,7 +871,10 @@ impl Network {
             })
             .collect();
         cache.insert(key, results.clone());
-        let _ = save("searches_v2.json", &cache);
+        while cache.len() > 500 {
+            cache.pop_first();
+        }
+        let _ = save("searches_v3.json", &cache);
         Ok(results)
     }
     pub fn area(&mut self, result: SearchResult) -> Result<Area, String> {
@@ -854,16 +919,14 @@ impl Network {
                 .timeout(Duration::from_secs(55))
                 .form(&[("data", &query)])
                 .send()
-                .and_then(|r| r.error_for_status())
-                .and_then(|r| r.text());
-            match response {
-                Ok(json) => match Area::parse(result.name.clone(), p, MAP_RADIUS, &json) {
-                    Ok(mut area) => {
-                        area.version = 9;
-                        save(key, &area).map_err(|e| format!("Could not cache map: {e}"))?;
-                        return Ok(area);
+                .and_then(|r| r.error_for_status());
+            let json = match response {
+                Ok(response) => match limited_text(response, 32 * 1024 * 1024) {
+                    Ok(json) => json,
+                    Err(error) => {
+                        last_error = error;
+                        continue;
                     }
-                    Err(error) => last_error = error,
                 },
                 Err(error) => {
                     let retryable = error.is_timeout()
@@ -873,7 +936,16 @@ impl Network {
                     if !retryable {
                         break;
                     }
+                    continue;
                 }
+            };
+            match Area::parse(result.name.clone(), p, MAP_RADIUS, &json) {
+                Ok(mut area) => {
+                    area.version = 9;
+                    save(key, &area).map_err(|e| format!("Could not cache map: {e}"))?;
+                    return Ok(area);
+                }
+                Err(error) => last_error = error,
             }
         }
         Err(format!("Neighborhood download unavailable: {last_error}. Your previous map is still available."))
@@ -925,8 +997,8 @@ impl Network {
                                 .timeout(Duration::from_secs(15))
                                 .send()
                                 .and_then(|r| r.error_for_status())
-                                .and_then(|r| r.text())
                                 .map_err(|e| e.to_string())?;
+                            let response = limited_text(response, 4 * 1024 * 1024)?;
                             std::fs::create_dir_all(directory()).map_err(|e| e.to_string())?;
                             std::fs::write(directory().join(cache_key), &response)
                                 .map_err(|e| e.to_string())?;
@@ -1064,7 +1136,8 @@ impl Network {
             p.lat
         );
         let fetch = |radii| {
-            self.client
+            let response = self
+                .client
                 .get(&url)
                 .query(&[
                     ("steps", "true"),
@@ -1074,11 +1147,10 @@ impl Network {
                     ("generate_hints", "false"),
                 ])
                 .send()
-                .and_then(|r| {
-                    let status = r.status();
-                    r.text().map(|body| (status, body))
-                })
-                .map_err(|e| format!("Route request failed: {e}"))
+                .map_err(|e| format!("Route request failed: {e}"))?;
+            let status = response.status();
+            let body = limited_text(response, 16 * 1024 * 1024)?;
+            Ok::<_, String>((status, body))
         };
         let (mut status, mut json) = fetch("100;100")?;
         if driving && destination_needs_wider_snap(status, &json) {
@@ -1152,15 +1224,15 @@ impl Network {
             "costing":"auto", "costing_options":{"auto":options},
             "format":"osrm", "shape_format":"geojson"
         });
-        let json = self
+        let response = self
             .client
             .post(endpoint)
             .json(&payload)
             .timeout(Duration::from_secs(55))
             .send()
             .and_then(|r| r.error_for_status())
-            .and_then(|r| r.text())
             .map_err(|e| format!("Driving route with {} unavailable: {e}", preference.label()))?;
+        let json = limited_text(response, 16 * 1024 * 1024)?;
         let route = Route::from_osrm_driving(destination.name, p, &json).map_err(|e| {
             e.replace("walking", "driving")
                 .replace("Walking", "Driving")
@@ -1204,7 +1276,7 @@ impl Network {
                     v
                 } else {
                     self.throttle();
-                    let v = self
+                    let response = self
                         .client
                         .get("https://www.wikidata.org/w/api.php")
                         .query(&[
@@ -1218,9 +1290,8 @@ impl Network {
                         .send()
                         .ok()?
                         .error_for_status()
-                        .ok()?
-                        .json()
                         .ok()?;
+                    let v: serde_json::Value = limited_json(response, 1024 * 1024).ok()?;
                     let _ = save(&key, &v);
                     v
                 };
@@ -1253,8 +1324,8 @@ impl Network {
                     .timeout(Duration::from_secs(12))
                     .send()
                     .and_then(|r| r.error_for_status())
-                    .and_then(|r| r.json())
-                    .map_err(|e| format!("Place description unavailable: {e}"));
+                    .map_err(|e| format!("Place description unavailable: {e}"))
+                    .and_then(|r| limited_json::<serde_json::Value>(r, 2 * 1024 * 1024));
                 if let Ok(v) = &fetched {
                     let _ = save(&key, v);
                 }
@@ -1294,13 +1365,20 @@ fn destination_needs_wider_snap(status: reqwest::StatusCode, body: &str) -> bool
             })
 }
 fn complete_source_description(description: &str) -> String {
-    let trimmed = description.trim();
-    if trimmed.chars().count() >= 200 && trimmed.chars().last().is_some_and(|c| c.is_alphabetic()) {
-        if let Some(end) = trimmed.rfind(['.', '!', '?']) {
-            return format!("{} The source description ends here.", &trimmed[..=end]);
-        }
+    description.trim().to_owned()
+}
+fn search_cache_key(query: &str, origin: Option<Point>) -> String {
+    let query = query.trim().to_lowercase();
+    match origin.filter(|p| p.valid()) {
+        Some(point) => format!("{query}|{:.3},{:.3}", point.lat, point.lon),
+        None => query,
     }
-    trimmed.to_owned()
+}
+pub(crate) fn house_number_prefix(query: &str) -> Option<&str> {
+    query
+        .split_whitespace()
+        .next()
+        .filter(|first| !first.is_empty() && first.chars().all(|c| c.is_ascii_digit()))
 }
 fn stable_hash(text: &str) -> u64 {
     text.bytes().fold(0xcbf29ce484222325u64, |h, b| {

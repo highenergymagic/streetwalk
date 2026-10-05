@@ -1,6 +1,8 @@
 use crate::geo::{clock, compass, project, Point};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
+type ContextNodes = Arc<OnceLock<Vec<(Point, Vec<String>)>>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Road {
@@ -114,6 +116,8 @@ pub struct Area {
     pub road_events: Vec<RoadEvent>,
     #[serde(default)]
     pub google_street: String,
+    #[serde(skip)]
+    pub(crate) context_nodes: ContextNodes,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -171,6 +175,7 @@ impl Area {
             signalized_crossings: vec![],
             road_events: vec![],
             google_street: String::new(),
+            context_nodes: Arc::default(),
         }
     }
     pub fn full_location(&self, p: Point, heading: f64, address: &AddressContext) -> String {
@@ -372,6 +377,7 @@ impl Area {
         }
         let mut area = Self {
             google_street: String::new(),
+            context_nodes: Arc::default(),
             name,
             version: 5,
             center,
@@ -881,18 +887,24 @@ impl Area {
             });
         }
         // Only shared OSM nodes count as intersections: bridges crossing in geometry do not.
-        let mut nodes: HashMap<u64, (Point, Vec<&str>)> = HashMap::new();
-        for road in &self.roads {
-            for (id, point) in road.nodes.iter().zip(&road.points) {
-                let entry = nodes.entry(*id).or_insert((*point, vec![]));
-                if !entry.1.contains(&road.name.as_str()) {
-                    entry.1.push(&road.name);
+        let nodes = self.context_nodes.get_or_init(|| {
+            let mut nodes: HashMap<u64, (Point, Vec<String>)> = HashMap::new();
+            for road in &self.roads {
+                for (id, point) in road.nodes.iter().zip(&road.points) {
+                    let entry = nodes.entry(*id).or_insert((*point, vec![]));
+                    if !entry.1.contains(&road.name) {
+                        entry.1.push(road.name.clone());
+                    }
                 }
             }
-        }
+            nodes
+                .into_values()
+                .filter(|(_, names)| names.len() > 1)
+                .collect()
+        });
         let corner = nodes
-            .values()
-            .filter(|(q, n)| n.len() > 1 && p.distance(*q) < 18.)
+            .iter()
+            .filter(|(q, _)| p.distance(*q) < 18.)
             .min_by(|a, b| p.distance(a.0).total_cmp(&p.distance(b.0)));
         if let Some((q, names)) = corner {
             let display = names.join(" and ");

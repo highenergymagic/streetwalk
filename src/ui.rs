@@ -235,6 +235,7 @@ struct App {
     muted: bool,
     busy: bool,
     tx: Sender<Job>,
+    map_tx: Sender<Job>,
     rx: Receiver<Reply>,
     location_tx: Sender<Reply>,
     start_at_pc_location: bool,
@@ -242,6 +243,7 @@ struct App {
     route: Option<Guidance>,
     drive: Option<Drive>,
     drive_generation: u64,
+    traffic_generation: u64,
     driving_settings: DrivingSettings,
     weather_pending: bool,
     traffic_pending: bool,
@@ -281,9 +283,11 @@ struct Drive {
     progress: f64,
     last_tick: Instant,
     last_callout: Instant,
+    last_poi_scan: Instant,
     last_context_callout: Instant,
     mentioned: HashSet<String>,
     paused: bool,
+    paused_by_closure: bool,
     speed_kmh: f64,
     traffic_kmh: Option<f64>,
     lead: Option<LeadTraffic>,
@@ -312,6 +316,71 @@ struct Drive {
     last_street_speech: Instant,
     last_guidance_announcement: Instant,
     last_guidance_progress: f64,
+}
+impl Drive {
+    fn new(
+        route: Route,
+        speed_kmh: f64,
+        tagged_speed: bool,
+        texture: f64,
+        start_context: Option<String>,
+    ) -> Self {
+        let now = Instant::now();
+        let driver = DriverProfile::sampled();
+        let next_maneuver = route
+            .maneuvers
+            .iter()
+            .position(|m| m.at > 10.)
+            .unwrap_or(route.maneuvers.len());
+        Self {
+            route,
+            progress: 0.,
+            last_tick: now,
+            last_callout: now - Duration::from_secs(8),
+            last_poi_scan: now - Duration::from_secs(1),
+            last_context_callout: now - Duration::from_secs(30),
+            mentioned: HashSet::new(),
+            paused: false,
+            paused_by_closure: false,
+            speed_kmh,
+            traffic_kmh: None,
+            lead: None,
+            actual_speed_kmh: 0.,
+            actual_acceleration_mps2: 0.,
+            driver,
+            departure_delay: driver.reaction_seconds,
+            texture,
+            tagged_speed,
+            last_speed_callout: now - Duration::from_secs(12),
+            last_speed_check: now,
+            stop: None,
+            seen_signals: HashSet::new(),
+            seen_road_events: HashSet::new(),
+            road_event_counter: 0,
+            road_event_kind: 0,
+            elevation_samples: vec![],
+            elevation_pending: false,
+            elevation_until: 0.,
+            mentioned_incidents: HashSet::new(),
+            last_incident_callout: now - Duration::from_secs(15),
+            next_maneuver,
+            maneuver_previewed: false,
+            last_street_context: start_context,
+            last_street_announcement: now,
+            last_street_speech: now,
+            last_guidance_announcement: now - Duration::from_secs(5),
+            last_guidance_progress: 0.,
+        }
+    }
+    fn clear_live_traffic(&mut self) {
+        self.traffic_kmh = None;
+        self.lead = None;
+        if self.paused_by_closure {
+            self.paused = false;
+            self.paused_by_closure = false;
+            self.last_tick = Instant::now();
+        }
+    }
 }
 fn route_grade(samples: &[(f64, f64)], progress: f64) -> f64 {
     let interpolate = |at: f64| {
@@ -1495,7 +1564,7 @@ impl App {
             return;
         }
         if self
-            .tx
+            .map_tx
             .send(Job::Cover(target, self.map_generation))
             .is_ok()
         {
@@ -1688,6 +1757,20 @@ impl App {
             }
         }
         self.driving_settings.adjust(index, direction);
+        if index == 2 {
+            self.traffic_generation = self.traffic_generation.wrapping_add(1);
+            self.traffic_pending = false;
+            self.incidents_pending = false;
+            self.last_traffic_request = None;
+            self.last_incidents_request = None;
+            if !self.driving_settings.live_traffic {
+                self.last_traffic = None;
+                self.incidents.clear();
+                if let Some(drive) = &mut self.drive {
+                    drive.clear_live_traffic();
+                }
+            }
+        }
         let label = self.driving_settings.labels()[index].clone();
         self.render_results_page();
         unsafe {
@@ -1713,6 +1796,9 @@ impl App {
             self.update_attribution();
             let _ = self
                 .tx
+                .send(Job::SetGoogleMode(self.driving_settings.google_mode));
+            let _ = self
+                .map_tx
                 .send(Job::SetGoogleMode(self.driving_settings.google_mode));
             self.start(Job::Load(SearchResult {
                 name: "Current position".into(),
@@ -1775,7 +1861,7 @@ impl App {
             .send(Job::Traffic(
                 self.point,
                 self.heading,
-                self.drive_generation,
+                self.traffic_generation,
             ))
             .is_ok();
     }
@@ -1793,7 +1879,7 @@ impl App {
         self.last_incidents_request = Some((self.point, Instant::now()));
         self.incidents_pending = self
             .tx
-            .send(Job::Incidents(self.point, self.drive_generation))
+            .send(Job::Incidents(self.point, self.traffic_generation))
             .is_ok();
     }
     fn request_drive_address(&mut self, force: bool) {
@@ -2204,7 +2290,9 @@ impl App {
             if !guidance_spoken
                 && drive_poi_ready_after_street(now, drive.last_street_speech)
                 && now.duration_since(drive.last_callout) >= Duration::from_secs(8)
+                && now.duration_since(drive.last_poi_scan) >= Duration::from_secs(1)
             {
+                drive.last_poi_scan = now;
                 let candidate = drive_poi_candidate(
                     &self.area,
                     &drive.route,
@@ -2273,7 +2361,12 @@ impl App {
             self.map_generation += 1;
             self.route_generation += 1;
         }
-        if self.tx.send(job).is_err() {
+        let sender = if matches!(job, Job::Load(_) | Job::Route(..) | Job::DriveRoute(..)) {
+            &self.map_tx
+        } else {
+            &self.tx
+        };
+        if sender.send(job).is_err() {
             self.busy = false;
             self.announce("The download worker has stopped. Restart Streetwalk.");
             return;
@@ -2554,12 +2647,11 @@ impl App {
                             } else {
                                 self.area.driving_speed(start_point, start_heading, self.driving_settings.fallback)
                             };
-                            let next_maneuver = route.maneuvers.iter().position(|m| m.at > 10.).unwrap_or(route.maneuvers.len());
                             let start_context = self.area.context(start_point).map(|(key, _)| key);
                             let departure = route.maneuvers.first().map(|m| m.text.clone()).unwrap_or_default();
-                            let driver = DriverProfile::sampled();
                             self.route = None;
-                            self.drive = Some(Drive { route, progress: 0., last_tick: Instant::now(), last_callout: Instant::now() - Duration::from_secs(8), last_context_callout: Instant::now() - Duration::from_secs(30), mentioned: HashSet::new(), paused: false, speed_kmh, traffic_kmh: None, lead: None, actual_speed_kmh: 0., actual_acceleration_mps2: 0., driver, departure_delay: driver.reaction_seconds, texture: self.area.driving_texture(start_point), tagged_speed, last_speed_callout: Instant::now() - Duration::from_secs(12), last_speed_check: Instant::now(), stop: None, seen_signals: HashSet::new(), seen_road_events: HashSet::new(), road_event_counter: 0, road_event_kind: 0, elevation_samples: vec![], elevation_pending: false, elevation_until: 0., mentioned_incidents: HashSet::new(), last_incident_callout: Instant::now() - Duration::from_secs(15), next_maneuver, maneuver_previewed: false, last_street_context: start_context, last_street_announcement: Instant::now(), last_street_speech: Instant::now(), last_guidance_announcement: Instant::now() - Duration::from_secs(5), last_guidance_progress: 0. });
+                            self.drive = Some(Drive::new(route, speed_kmh, tagged_speed, self.area.driving_texture(start_point), start_context));
+                            self.traffic_generation = self.traffic_generation.wrapping_add(1);
                             self.show_view(View::Explore);
                             unsafe { SetFocus(self.walk) };
                             self.announce(&format!("Virtual drive to {name}, {:.1} kilometres. {departure}. Accelerating toward {:.0} kilometres per hour. D pauses or resumes; U ends the drive.", length / 1000., speed_kmh));
@@ -2627,8 +2719,9 @@ impl App {
                     }
                 }
                 Reply::Traffic(result, sample_point, heading, generation) => {
-                    if generation != self.drive_generation { continue; }
+                    if generation != self.traffic_generation { continue; }
                     self.traffic_pending = false;
+                    if !self.driving_settings.live_traffic { continue; }
                     if self.drive.is_none() || self.point.distance(sample_point) > 2_000. { continue; }
                     match result {
                         Ok(flow) if flow.matches_route(sample_point, heading) => {
@@ -2637,6 +2730,7 @@ impl App {
                             if let Some(drive) = &mut self.drive {
                                 if flow.closed {
                                     drive.paused = true;
+                                    drive.paused_by_closure = true;
                                     drive.traffic_kmh = None;
                                     self.announce("TomTom reports a road closure on this segment. Virtual drive paused. Choose another route or turn off live traffic in Driving options.");
                                 } else {
@@ -2668,8 +2762,9 @@ impl App {
                     }
                 }
                 Reply::Incidents(result, generation) => {
-                    if generation != self.drive_generation { continue; }
+                    if generation != self.traffic_generation { continue; }
                     self.incidents_pending = false;
+                    if !self.driving_settings.live_traffic { continue; }
                     match result {
                         Ok(incidents) => self.incidents = incidents,
                         Err(error) if !self.incidents_error_reported => {
@@ -2853,6 +2948,7 @@ impl App {
             0x44 => {
                 if let Some(drive) = &mut self.drive {
                     drive.paused = !drive.paused;
+                    drive.paused_by_closure = false;
                     drive.last_tick = Instant::now();
                     let paused = drive.paused;
                     self.announce(if paused {
@@ -3475,8 +3571,59 @@ pub fn run() {
             24,
         );
         let (tx, jobs) = mpsc::channel();
+        let (map_tx, map_jobs) = mpsc::channel();
         let (send, rx) = mpsc::channel();
         let location_tx = send.clone();
+        let map_send = send.clone();
+        std::thread::spawn(move || {
+            let mut network = Network::new();
+            while let Ok(job) = map_jobs.recv() {
+                let reply = match job {
+                    Job::SetGoogleMode(enabled) => {
+                        if let Ok(network) = &mut network {
+                            network.set_google_mode(enabled);
+                        }
+                        continue;
+                    }
+                    Job::Load(place) => {
+                        let point = place.point;
+                        Reply::Load(match &mut network {
+                            Ok(network) => network.area(place).map(|area| (area, point)),
+                            Err(error) => Err(error.clone()),
+                        })
+                    }
+                    Job::Cover(point, generation) => Reply::Cover(
+                        match &mut network {
+                            Ok(network) => network.cover(point),
+                            Err(error) => Err(error.clone()),
+                        },
+                        generation,
+                    ),
+                    Job::Route(start, destination, generation) => Reply::Route(
+                        match &mut network {
+                            Ok(network) => network.route(start, destination),
+                            Err(error) => Err(error.clone()),
+                        },
+                        start,
+                        generation,
+                    ),
+                    Job::DriveRoute(start, destination, preference, generation) => {
+                        Reply::DriveRoute(
+                            match &mut network {
+                                Ok(network) => network.route_drive(start, destination, preference),
+                                Err(error) => Err(error.clone()),
+                            },
+                            start,
+                            generation,
+                        )
+                    }
+                    _ => continue,
+                };
+                if map_send.send(reply).is_err() {
+                    break;
+                }
+            }
+        });
         std::thread::spawn(move || {
             let mut network = Network::new();
             while let Ok(job) = jobs.recv() {
@@ -3655,6 +3802,7 @@ pub fn run() {
             muted: false,
             busy: false,
             tx,
+            map_tx,
             rx,
             location_tx,
             start_at_pc_location: false,
@@ -3662,6 +3810,7 @@ pub fn run() {
             route,
             drive: None,
             drive_generation: 0,
+            traffic_generation: 0,
             driving_settings,
             weather_pending: false,
             traffic_pending: false,
@@ -3743,6 +3892,7 @@ pub fn run() {
             app.area = Area::google_empty(app.point);
             app.route = None;
             let _ = app.tx.send(Job::SetGoogleMode(true));
+            let _ = app.map_tx.send(Job::SetGoogleMode(true));
             app.start(Job::Load(SearchResult {
                 name: "Current position".into(),
                 point: app.point,
@@ -4023,6 +4173,31 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disabling_live_traffic_clears_speed_and_closure_state() {
+        let area = Area::demo();
+        let route = Route::demo(
+            &area,
+            area.center.walk(0., 100.),
+            "Destination".into(),
+            area.center.walk(90., 100.),
+        )
+        .unwrap();
+        let mut drive = Drive::new(route, 50., false, 1., None);
+        drive.traffic_kmh = Some(12.);
+        drive.lead = Some(LeadTraffic::new(0., 12., 2.));
+        drive.paused = true;
+        drive.paused_by_closure = true;
+        drive.clear_live_traffic();
+        assert!(drive.traffic_kmh.is_none());
+        assert!(drive.lead.is_none());
+        assert!(!drive.paused);
+
+        drive.paused = true;
+        drive.clear_live_traffic();
+        assert!(drive.paused, "a manual pause must remain in effect");
+    }
 
     #[test]
     fn drive_poi_waits_two_and_a_half_seconds_after_street_speech() {
@@ -4384,6 +4559,7 @@ mod tests {
             );
             assert!(!output.is_null());
             let (tx, _jobs) = mpsc::channel();
+            let map_tx = tx.clone();
             let (_send, rx) = mpsc::channel();
             let area = Area::demo();
             let home = area.center;
@@ -4418,6 +4594,7 @@ mod tests {
                 muted: true,
                 busy: false,
                 tx,
+                map_tx,
                 rx,
                 location_tx: _send.clone(),
                 start_at_pc_location: false,
@@ -4425,6 +4602,7 @@ mod tests {
                 route: None,
                 drive: None,
                 drive_generation: 0,
+                traffic_generation: 0,
                 driving_settings: DrivingSettings::default(),
                 weather_pending: false,
                 traffic_pending: false,

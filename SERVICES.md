@@ -14,7 +14,7 @@ This file describes the current network calls and local files. The [main guide](
 | Smaller-road or avoid-motorway drive | Public Valhalla route service | Routes API with avoid-highways bias |
 | Place context | Linked Wikipedia/Wikidata or OSM description where available | Google place type and formatted address |
 
-OpenStreetMap neighborhoods use zoom-16 tiles cached locally. If tiles fail, Streetwalk tries Overpass through VK Maps and then Private.coffee, unless `STREETWALK_OVERPASS_URL` overrides them. Public servers have capacity limits; a failed request leaves the last map in place. The UI attributes OpenStreetMap data and offers a Fix the map button. Google mode shows Google attribution. Google places, address and route responses are not saved for offline reuse.
+OpenStreetMap neighborhoods use zoom-16 tiles cached locally. If tiles fail, Streetwalk tries Overpass through VK Maps and then Private.coffee, unless `STREETWALK_OVERPASS_URL` overrides them. Photon searches use the virtual position as a ranking bias and cache results by query and nearby origin. Public servers have capacity limits; a failed request leaves the last map in place. Map and route downloads have a separate worker so they do not hold up address and traffic requests. Service responses have size limits. The UI attributes OpenStreetMap data and offers a Fix the map button. Google mode shows Google attribution. Google places remain available when a reverse address lookup fails. Google places, address and route responses are not saved for offline reuse.
 
 ## Weather and traffic
 
@@ -28,7 +28,7 @@ The optional Windows PC-location choice requests one position at startup or when
 
 By default, writable files go in `data` beside the executable; `STREETWALK_DATA` changes this directory. OpenStreetMap neighborhoods, searches and routes can be reused offline from there. Position, heading, walking step, turn increment, options and bookmarks are saved. An active OpenStreetMap walking route is restored after normal closing. New uncached real-world areas and routes need internet. The included fictional demo works offline.
 
-A TomTom key can be read from `tomtom_key.txt` beside the executable, the older `data/tomtom_key.txt`, or `STREETWALK_TOMTOM_KEY`. A Google key can be read from `google_key.txt` beside the executable or `STREETWALK_GOOGLE_KEY`. Environment variables take precedence. The packaged TomTom key consumes the owner's quota when used; remove it before sharing if that is unwanted. The package script does not automatically add a Google key.
+A TomTom key can be read from `tomtom_key.txt` beside the executable, the older `data/tomtom_key.txt`, or `STREETWALK_TOMTOM_KEY`. A Google key can be read from `google_key.txt` beside the executable or `STREETWALK_GOOGLE_KEY`. Environment variables take precedence. Portable packages exclude both keys by default. `package.ps1 -IncludeTomTomKey` explicitly includes the configured TomTom key and grants recipients use of its quota. The package script never adds a Google key.
 
 ## Service overrides
 
@@ -56,7 +56,7 @@ Windows, Rust and a matching native linker are required. The script uses `tools/
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-`build.ps1` checks formatting, runs the unit tests, builds the release executable and assembles `dist/Streetwalk`. With the required NVDA controller DLL and TomTom key available, `package.ps1` creates a timestamped portable folder and ZIP under `dist`. The portable package includes source, lockfile, notices and an empty data folder. Locally downloaded research PDFs and the original Freesound preview stay in `research/leaf2017/sources` and are excluded from the portable package.
+`build.ps1` checks formatting, runs the unit tests, builds the release executable and assembles `dist/Streetwalk`. With the required NVDA controller DLL available, `package.ps1` creates a timestamped portable folder and ZIP under `dist`; a TomTom key is only required with `-IncludeTomTomKey`. The portable package includes source, lockfile, notices and an empty data folder. Locally downloaded research PDFs and the original Freesound preview stay in `research/leaf2017/sources` and are excluded from the portable package.
 
 For explicit network smoke tests, use `cargo test live_search_download_and_cache -- --ignored --nocapture`. They contact public services and write under `target/live-smoke`. With NVDA running, `cargo test --test nvda -- --ignored --nocapture` checks the controller DLL connection without speaking. Offline unit tests cover map parsing, navigation, speech, audio and route behavior; they do not verify perceived realism or every keyboard-focus path in a live Windows session.
 

@@ -167,7 +167,27 @@ impl Route {
         *self.distances.last().unwrap_or(&0.)
     }
     pub fn validate(self) -> Result<Self, String> {
-        Self::new(self.name, self.destination, self.points, self.maneuvers)
+        let Self {
+            name,
+            destination,
+            points,
+            maneuvers,
+            cruise_speeds,
+            ..
+        } = self;
+        let mut route = Self::new(name, destination, points, maneuvers)?;
+        if cruise_speeds.iter().any(|(at, speed)| {
+            !at.is_finite()
+                || *at < 0.
+                || *at > route.length()
+                || !speed.is_finite()
+                || !(0. ..=160.).contains(speed)
+        }) || cruise_speeds.windows(2).any(|pair| pair[0].0 > pair[1].0)
+        {
+            return Err("Invalid route speed estimates".into());
+        }
+        route.cruise_speeds = cruise_speeds;
+        Ok(route)
     }
     pub fn from_osrm(name: String, destination: Point, json: &str) -> Result<Self, String> {
         Self::from_osrm_mode(name, destination, json, false)
@@ -581,6 +601,17 @@ mod tests {
         .unwrap()
     }
     #[test]
+    fn cached_route_validation_keeps_speed_estimates() {
+        let mut cached = route();
+        cached.cruise_speeds = vec![(0., 35.), (100., 55.)];
+        let restored = cached.validate().unwrap();
+        assert_eq!(restored.cruise_speed(150.), Some(55.));
+
+        let mut invalid = route();
+        invalid.cruise_speeds = vec![(100., f64::NAN)];
+        assert!(invalid.validate().is_err());
+    }
+    #[test]
     fn degree_turns_wrap() {
         assert_eq!(turn_words(350., 10.), "Turn right 20 degrees");
         assert_eq!(turn_words(10., 350.), "Turn left 20 degrees");
@@ -625,6 +656,7 @@ mod tests {
         let empty = Area {
             roads: vec![],
             places: vec![],
+            context_nodes: Default::default(),
             ..a
         };
         assert!(n.update(&empty, p, 0.).is_empty());

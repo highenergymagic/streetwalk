@@ -1,3 +1,4 @@
+param([switch]$IncludeTomTomKey)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
@@ -6,7 +7,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 
 $built = Join-Path $PSScriptRoot 'dist\Streetwalk'
 $key = Join-Path $built 'data\tomtom_key.txt'
-if (-not (Test-Path -LiteralPath $key -PathType Leaf)) {
+if ($IncludeTomTomKey -and -not (Test-Path -LiteralPath $key -PathType Leaf)) {
     throw 'TomTom key file is missing from dist\Streetwalk\data\tomtom_key.txt'
 }
 $controller = Join-Path $built 'nvdaControllerClient.dll'
@@ -43,7 +44,9 @@ if (Test-Path -LiteralPath $mingwNotice) {
     Copy-Item -LiteralPath $mingwNotice -Destination $destination
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'target\release\streetwalk.exe') -Destination $destination
-Copy-Item -LiteralPath $key -Destination (Join-Path $destination 'tomtom_key.txt')
+if ($IncludeTomTomKey) {
+    Copy-Item -LiteralPath $key -Destination (Join-Path $destination 'tomtom_key.txt')
+}
 
 $zip = "$destination.zip"
 Compress-Archive -LiteralPath $destination -DestinationPath $zip
