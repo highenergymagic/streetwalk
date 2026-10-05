@@ -1294,7 +1294,7 @@ mod tests {
         assert_eq!(source.channels().get(), 2);
         let samples: Vec<f32> = source.by_ref().take(44_100 * 2).collect();
         let (mut difference, mut energy, mut left_energy, mut right_energy) = (0., 0., 0., 0.);
-        for pair in samples.chunks_exact(2) {
+        for pair in samples.as_chunks::<2>().0 {
             difference += (pair[0] - pair[1]).abs();
             energy += pair[0].abs() + pair[1].abs();
             left_energy += pair[0] * pair[0];
