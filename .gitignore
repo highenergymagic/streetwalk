@@ -1,0 +1,12 @@
+/target/
+/dist/
+/data/
+/tools/
+google_key.txt
+tomtom_key.txt
+.env
+.env.*
+/.reference/
+/research/leaf2017/sources/
+/research/leaf2017/cambridge.txt
+/research/leaf2017/ricardo.txt

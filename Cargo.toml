@@ -1,0 +1,23 @@
+[package]
+name = "streetwalk"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/highenergymagic/streetwalk"
+description = "Accessible virtual exploration and driving simulator for Windows"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+libloading = "0.8"
+rodio = { version = "0.22.2", default-features = false, features = ["playback", "wav"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_StationsAndDesktops", "Win32_UI_WindowsAndMessaging", "Win32_UI_Controls", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell"] }
+windows = { version = "0.62", features = ["Devices_Geolocation", "Foundation", "Win32_System_WinRT"] }
+windows-future = "0.3"
+pulldown-cmark = "0.13"
+
+[profile.release]
+lto = true
+strip = true

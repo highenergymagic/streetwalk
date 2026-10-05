@@ -1,0 +1,42 @@
+{
+  "2017-leaf-owner-manual.pdf": {
+    "url": "https://owners.nissanusa.com/content/techpub/ManualsAndGuides/LEAF/2017/2017-LEAF-owner-manual.pdf",
+    "bytes": 4726281,
+    "sha256": "f949ff3e9e124e8683c58ad8a2dc0462df96e29a8ea7741a8aad63da67db3e6c"
+  },
+  "cambridge-leaf-road-noise-2021.pdf": {
+    "url": "https://api.repository.cam.ac.uk/server/api/core/bitstreams/666fec54-c3a5-4504-b2c2-3dd826e8647a/content",
+    "bytes": 1204458,
+    "sha256": "5cc07bcd49d974cb2762ba5f6140f44bb285950b4c904c71f14ae4c5130947c2"
+  },
+  "danish-electric-vehicle-noise.pdf": {
+    "url": "https://www.vejdirektoratet.dk/sites/default/files/publications/noise_from_electric_vehicles_0.pdf",
+    "bytes": 3190948,
+    "sha256": "917550ee6732e46effe2f269347759b09d8f26260680c1389449196530525db9"
+  },
+  "nissan-leaf-2017-specifications.html": {
+    "url": "https://usa.nissannews.com/en-US/releases/2017-nissan-leaf-specifications",
+    "bytes": 156577,
+    "sha256": "9deb77aae7c6285b5df8c660efd16dac512b9e68269fc5e944ead5c97773ee57"
+  },
+  "nissan-leaf-brochure-2016.pdf": {
+    "url": "https://www.nissan-cdn.net/content/dam/Nissan/palestine/brochure/Nissan_Leaf.pdf",
+    "bytes": 2164262,
+    "sha256": "fa52833f94523745e285ea9ea18f7e3e9b2e6f25228d089fb55190c07c68bd47"
+  },
+  "nissan-leaf-interior-martian-hq-preview.mp3": {
+    "url": "https://cdn.freesound.org/previews/512/512492_84709-hq.mp3",
+    "bytes": 15482864,
+    "sha256": "066395519ced10f3b5453a3630e0b1fbb8f73c91ae494c9a34b21283abd8c5c1"
+  },
+  "ornl-early-leaf-teardown.pdf": {
+    "url": "https://info.ornl.gov/sites/publications/files/Pub46325.pdf",
+    "bytes": 1202014,
+    "sha256": "864d5919001dd85615f2471f65d7042b5789a349955bba78189ace32e7ce9f5c"
+  },
+  "ricardo-leaf-interior-tones-2014.pdf": {
+    "url": "https://www.acoustics.asn.au/conference_proceedings/INTERNOISE2014/papers/p578.pdf",
+    "bytes": 634558,
+    "sha256": "f1f6f40738bde6dde8891d557841f196c4fc4c23110d4aa85dce3bb18fb50ce7"
+  }
+}

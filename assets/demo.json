@@ -1,0 +1,7 @@
+{"elements":[
+ {"tags":{"highway":"residential","name":"Third Avenue"},"nodes":[1,2,3],"geometry":[{"lat":47.596,"lon":-122.33},{"lat":47.6,"lon":-122.33},{"lat":47.604,"lon":-122.33}]},
+ {"tags":{"highway":"residential","name":"Park Street"},"nodes":[4,2,5],"geometry":[{"lat":47.6,"lon":-122.336},{"lat":47.6,"lon":-122.33},{"lat":47.6,"lon":-122.324}]},
+ {"tags":{"amenity":"cafe","name":"Americano Cafe and Bar","addr:street":"Third Avenue"},"lat":47.6003,"lon":-122.3299},
+ {"tags":{"shop":"car_repair","name":"Carnarvan Auto Club","addr:street":"Park Street"},"lat":47.5999,"lon":-122.3307},
+ {"tags":{"leisure":"park","name":"Little Park"},"lat":47.601,"lon":-122.331}
+]}
