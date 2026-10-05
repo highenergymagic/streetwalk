@@ -24,7 +24,9 @@ Download the controller client from [NV Access's official releases](https://down
 
 | Area | Files |
 | --- | --- |
-| Windows UI, keyboard input, application state, background requests | `src/ui.rs`, `src/main.rs` |
+| Windows app state and shared UI types | `src/ui.rs`, `src/main.rs` |
+| Window creation, input, browsable lists, and network replies | `src/ui/window.rs`, `src/ui/keyboard.rs`, `src/ui/browse.rs`, `src/ui/replies.rs` |
+| Virtual driver state, movement, and callouts | `src/ui/drive_model.rs`, `src/ui/drive.rs` |
 | OpenStreetMap data, cache, search, service calls | `src/data.rs`, `src/map.rs` |
 | Google Places, Geocoding, and Routes | `src/google.rs` |
 | Walking/driving routes and geometry | `src/navigation.rs`, `src/geo.rs` |
